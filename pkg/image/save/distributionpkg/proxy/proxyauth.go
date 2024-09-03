@@ -41,9 +41,12 @@ type credentials struct {
 }
 
 func (c credentials) Basic(u *url.URL) (string, string) {
-	up := c.creds[u.String()]
-
-	return up.username, up.password
+	for url, cred := range c.creds {
+		if strings.Contains(u.String(), url) {
+			return cred.username, cred.password
+		}
+	}
+	return "", ""
 }
 
 func (c credentials) RefreshToken(u *url.URL, service string) string {
@@ -57,36 +60,9 @@ func (c credentials) SetRefreshToken(u *url.URL, service, token string) {
 func configureAuth(username, password, remoteURL string) (auth.CredentialStore, error) {
 	creds := map[string]userpass{}
 
-	authURLs, err := getAuthURLs(remoteURL)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, url := range authURLs {
-		//		context.GetLogger(context.Background()).Infof("Discovered token authentication URL: %s", url)
-		creds[url] = userpass{
-			username: username,
-			password: password,
-		}
-	}
-
-	return credentials{creds: creds}, nil
-}
-
-func getAuthURLs(remoteURL string) ([]string, error) {
-	authURLs := []string{}
-
 	resp, err := http.Get(remoteURL + "/v2/")
 	if err != nil {
-		if strings.Contains(err.Error(), certUnknown) {
-			logrus.Warnf("create connect with unauthenticated registry url: %s", remoteURL)
-			resp, err = newClientSkipVerify().Get(remoteURL + "/v2/")
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			return nil, err
-		}
+		return nil, err
 	}
 	defer func(Body io.ReadCloser) {
 		err := Body.Close()
@@ -95,13 +71,12 @@ func getAuthURLs(remoteURL string) ([]string, error) {
 		}
 	}(resp.Body)
 
-	for _, c := range challenge.ResponseChallenges(resp) {
-		if strings.EqualFold(c.Scheme, "bearer") {
-			authURLs = append(authURLs, c.Parameters["realm"])
-		}
+	creds[remoteURL] = userpass{
+		username: username,
+		password: password,
 	}
 
-	return authURLs, nil
+	return credentials{creds: creds}, nil
 }
 
 // #nosec

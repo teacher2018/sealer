@@ -41,7 +41,7 @@ import (
 )
 
 // proxyingRegistry fetches content from a remote registry and caches it locally
-type proxyingRegistry struct {
+type ProxyingRegistry struct {
 	embedded       distribution.Namespace // provides local registry functionality
 	scheduler      *scheduler.TTLExpirationScheduler
 	remoteURL      url.URL
@@ -49,7 +49,7 @@ type proxyingRegistry struct {
 }
 
 // NewRegistryPullThroughCache creates a registry acting as a pull through cache
-func NewRegistryPullThroughCache(ctx context.Context, registry distribution.Namespace, driver driver.StorageDriver, config configuration.Proxy) (distribution.Namespace, error) {
+func NewRegistryPullThroughCache(ctx context.Context, registry distribution.Namespace, driver driver.StorageDriver, config configuration.Proxy) (*ProxyingRegistry, error) {
 	remoteURL, err := url.Parse(config.RemoteURL)
 	if err != nil {
 		return nil, err
@@ -60,7 +60,7 @@ func NewRegistryPullThroughCache(ctx context.Context, registry distribution.Name
 		return nil, err
 	}
 
-	return &proxyingRegistry{
+	return &ProxyingRegistry{
 		embedded:  registry,
 		scheduler: nil,
 		remoteURL: *remoteURL,
@@ -72,16 +72,16 @@ func NewRegistryPullThroughCache(ctx context.Context, registry distribution.Name
 	}, nil
 }
 
-func (pr *proxyingRegistry) Scope() distribution.Scope {
+func (pr *ProxyingRegistry) Scope() distribution.Scope {
 	return distribution.GlobalScope
 }
 
-func (pr *proxyingRegistry) Repositories(ctx context.Context, repos []string, last string) (n int, err error) {
+func (pr *ProxyingRegistry) Repositories(ctx context.Context, repos []string, last string) (n int, err error) {
 	return pr.embedded.Repositories(ctx, repos, last)
 }
 
 // #nosec
-func (pr *proxyingRegistry) Repository(ctx context.Context, name reference.Named) (distribution.Repository, error) {
+func (pr *ProxyingRegistry) Repository(ctx context.Context, name reference.Named) (distribution.Repository, error) {
 	c := pr.authChallenger
 	tlsConfig := tlsconfig.ServerDefault()
 	if err := registry.ReadCertsDirectory(tlsConfig, filepath.Join(registry.CertsDir(), pr.remoteURL.Host)); err != nil {
@@ -113,7 +113,9 @@ func (pr *proxyingRegistry) Repository(ctx context.Context, name reference.Named
 	}
 	tr := transport.NewTransport(http.DefaultTransport,
 		auth.NewAuthorizer(c.challengeManager(),
-			auth.NewTokenHandlerWithOptions(tkopts)))
+			auth.NewTokenHandlerWithOptions(tkopts),
+			auth.NewBasicHandler(c.credentialStore()),
+		))
 
 	tryClient := &http.Client{Transport: tr}
 	_, err := tryClient.Get(pr.remoteURL.String())
@@ -121,7 +123,9 @@ func (pr *proxyingRegistry) Repository(ctx context.Context, name reference.Named
 		tlsConfig.InsecureSkipVerify = true
 		tr = transport.NewTransport(transSport,
 			auth.NewAuthorizer(c.challengeManager(),
-				auth.NewTokenHandlerWithOptions(tkopts)))
+				auth.NewTokenHandlerWithOptions(tkopts),
+				auth.NewBasicHandler(c.credentialStore()),
+			))
 	}
 
 	localRepo, err := pr.embedded.Repository(ctx, name)
@@ -168,11 +172,11 @@ func (pr *proxyingRegistry) Repository(ctx context.Context, name reference.Named
 	}, nil
 }
 
-func (pr *proxyingRegistry) Blobs() distribution.BlobEnumerator {
+func (pr *ProxyingRegistry) Blobs() distribution.BlobEnumerator {
 	return pr.embedded.Blobs()
 }
 
-func (pr *proxyingRegistry) BlobStatter() distribution.BlobStatter {
+func (pr *ProxyingRegistry) BlobStatter() distribution.BlobStatter {
 	return pr.embedded.BlobStatter()
 }
 

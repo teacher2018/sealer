@@ -108,9 +108,9 @@ func (is *DefaultImageSaver) SaveImages(images []string, dir string, platform v1
 			if err != nil {
 				return fmt.Errorf("failed to init registry: %v", err)
 			}
-			err = is.save(tmpnameds, platform, registry)
+			err = is.save(tmpnameds, platform, *registry)
 			if err != nil {
-				return fmt.Errorf("failed to save domain %s image: %v", tmpnameds[0].domain, err)
+				return fmt.Errorf("failed to save domain %s image  with no auth : %v", tmpnameds[0].domain, err)
 			}
 			return nil
 		})
@@ -266,9 +266,9 @@ func (is *DefaultImageSaver) download(dir string, platform v1.Platform, section 
 	if err != nil {
 		return fmt.Errorf("failed to init registry: %v", err)
 	}
-	err = is.save(nameds, platform, registry)
+	err = is.save(nameds, platform, *registry)
 	if err != nil {
-		return fmt.Errorf("failed to save domain %s image: %v", nameds[0], err)
+		return fmt.Errorf("failed to save domain %s image  with auth : %v", nameds[0], err)
 	}
 
 	// double check whether the image is unbroken
@@ -293,8 +293,8 @@ func (is *DefaultImageSaver) download(dir string, platform v1.Platform, section 
 }
 
 // TODO: support retry mechanism here
-func (is *DefaultImageSaver) save(nameds []Named, platform v1.Platform, registry distribution.Namespace) error {
-	repo, err := is.getRepository(nameds[0], registry)
+func (is *DefaultImageSaver) save(nameds []Named, platform v1.Platform, registry proxy.ProxyingRegistry) error {
+	repo, err := is.getProxyRepository(nameds[0], registry)
 	if err != nil {
 		return err
 	}
@@ -310,6 +310,19 @@ func (is *DefaultImageSaver) save(nameds []Named, platform v1.Platform, registry
 	}
 
 	return nil
+}
+
+func (is *DefaultImageSaver) getProxyRepository(named Named, registry proxy.ProxyingRegistry) (distribution.Repository, error) {
+	repoName, err := reference.WithName(named.Repo())
+	// fmt.Printf("method[DefaultImageSaver.getProxyRepository] repoName = %s , registry = %s \n", repoName, registry)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get repository name: %v", err)
+	}
+	repo, err := registry.Repository(is.ctx, repoName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get repository: %v", err)
+	}
+	return repo, nil
 }
 
 func (is *DefaultImageSaver) getRepository(named Named, registry distribution.Namespace) (distribution.Repository, error) {
@@ -519,7 +532,7 @@ func (is *DefaultImageSaver) saveBlobs(imageDigests []digest.Digest, repo distri
 	return nil
 }
 
-func NewProxyRegistryWithAuth(ctx context.Context, username, password, rootdir, domain string) (distribution.Namespace, error) {
+func NewProxyRegistryWithAuth(ctx context.Context, username, password, rootdir, domain string) (*proxy.ProxyingRegistry, error) {
 	// set the URL of registry
 	proxyURL := HTTPS + domain
 	if domain == defaultDomain {
@@ -539,7 +552,7 @@ func NewProxyRegistryWithAuth(ctx context.Context, username, password, rootdir, 
 	return newProxyRegistry(ctx, config)
 }
 
-func NewProxyRegistry(ctx context.Context, rootdir, domain string) (distribution.Namespace, error) {
+func NewProxyRegistry(ctx context.Context, rootdir, domain string) (*proxy.ProxyingRegistry, error) {
 	// set the URL of registry
 	proxyURL := HTTPS + domain
 	if domain == defaultDomain {
@@ -573,7 +586,7 @@ func NewProxyRegistry(ctx context.Context, rootdir, domain string) (distribution
 	return newProxyRegistry(ctx, config)
 }
 
-func newProxyRegistry(ctx context.Context, config configuration.Configuration) (distribution.Namespace, error) {
+func newProxyRegistry(ctx context.Context, config configuration.Configuration) (*proxy.ProxyingRegistry, error) {
 	driver, err := factory.Create(config.Storage.Type(), config.Storage.Parameters())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage driver: %v", err)
